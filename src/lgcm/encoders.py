@@ -8,12 +8,24 @@ from numpy.typing import NDArray
 from .types import FloatVector
 
 
-def _input_vector(value: NDArray[np.float64] | list[float] | tuple[float, ...], *, dim: int, name: str) -> FloatVector:
+def _input_vector(
+    value: NDArray[np.float64] | list[float] | tuple[float, ...],
+    *,
+    dim: int,
+    name: str,
+    lower_bound: float,
+    upper_bound: float,
+) -> FloatVector:
     array = np.ascontiguousarray(value, dtype=np.float64)
     if array.ndim != 1 or array.shape[0] != dim:
         raise ValueError(f"{name} must have shape ({dim},)")
     if not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must contain only finite values")
+    if np.any(array < lower_bound) or np.any(array > upper_bound):
+        raise ValueError(
+            f"{name} must remain inside configured bounded range "
+            f"[{lower_bound}, {upper_bound}]"
+        )
     return array
 
 
@@ -21,18 +33,34 @@ def _input_vector(value: NDArray[np.float64] | list[float] | tuple[float, ...], 
 class IdentityFeatureEncoder:
     observation_dim: int
     action_dim: int
+    lower_bound: float = -1.0
+    upper_bound: float = 1.0
 
     def __post_init__(self) -> None:
         if self.observation_dim <= 0 or self.action_dim <= 0:
             raise ValueError("observation_dim and action_dim must be positive")
+        if not self.lower_bound < self.upper_bound:
+            raise ValueError("lower_bound must be less than upper_bound")
 
     @property
     def feature_dim(self) -> int:
         return 1 + self.observation_dim + self.action_dim
 
     def encode(self, observation: FloatVector, action: FloatVector) -> FloatVector:
-        obs = _input_vector(observation, dim=self.observation_dim, name="observation")
-        act = _input_vector(action, dim=self.action_dim, name="action")
+        obs = _input_vector(
+            observation,
+            dim=self.observation_dim,
+            name="observation",
+            lower_bound=self.lower_bound,
+            upper_bound=self.upper_bound,
+        )
+        act = _input_vector(
+            action,
+            dim=self.action_dim,
+            name="action",
+            lower_bound=self.lower_bound,
+            upper_bound=self.upper_bound,
+        )
         features = np.concatenate((np.ones(1, dtype=np.float64), obs, act))
         features.setflags(write=False)
         return features
@@ -47,6 +75,8 @@ class RandomFeatureEncoder:
         width: int,
         seed: int,
         max_feature_dim: int = 128,
+        lower_bound: float = -1.0,
+        upper_bound: float = 1.0,
     ) -> None:
         if observation_dim <= 0 or action_dim <= 0:
             raise ValueError("observation_dim and action_dim must be positive")
@@ -57,6 +87,10 @@ class RandomFeatureEncoder:
         self.width = width
         self.seed = seed
         self.max_feature_dim = max_feature_dim
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        if not lower_bound < upper_bound:
+            raise ValueError("lower_bound must be less than upper_bound")
         raw_dim = observation_dim + action_dim
         total = 1 + raw_dim + width
         if total > max_feature_dim:
@@ -77,8 +111,20 @@ class RandomFeatureEncoder:
         return self._projection
 
     def encode(self, observation: FloatVector, action: FloatVector) -> FloatVector:
-        obs = _input_vector(observation, dim=self.observation_dim, name="observation")
-        act = _input_vector(action, dim=self.action_dim, name="action")
+        obs = _input_vector(
+            observation,
+            dim=self.observation_dim,
+            name="observation",
+            lower_bound=self.lower_bound,
+            upper_bound=self.upper_bound,
+        )
+        act = _input_vector(
+            action,
+            dim=self.action_dim,
+            name="action",
+            lower_bound=self.lower_bound,
+            upper_bound=self.upper_bound,
+        )
         raw = np.concatenate((obs, act))
         nonlinear = np.tanh(self._projection @ raw)
         features = np.concatenate((np.ones(1, dtype=np.float64), raw, nonlinear))
