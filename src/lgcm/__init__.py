@@ -21,6 +21,7 @@ from .model import (
     LGCMConfig,
     UpdateReceipt,
 )
+from .persistence import SnapshotReceipt, load_snapshot, save_snapshot
 from .residuals import ResidualScaleTracker
 from .rls import RLSRegressor
 from .types import AdequacyState, Experience, Prediction
@@ -47,6 +48,9 @@ __all__ = [
     "Prediction",
     "RLSRegressor",
     "ResidualScaleTracker",
+    "SnapshotReceipt",
+    "load_snapshot",
+    "save_snapshot",
     "RandomFeatureEncoder",
     "BootstrapRecord",
     "UpdateReceipt",
