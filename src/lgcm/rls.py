@@ -34,6 +34,7 @@ class RLSRegressor:
         *,
         regularization: float = 1.0,
         forgetting_factor: float = 1.0,
+        initial_weights=None,
     ) -> None:
         if feature_dim <= 0 or output_dim <= 0:
             raise ValueError("feature_dim and output_dim must be positive")
@@ -49,7 +50,17 @@ class RLSRegressor:
         self.output_dim = output_dim
         self.regularization = float(regularization)
         self.forgetting_factor = float(forgetting_factor)
-        self._weights = np.zeros((feature_dim, output_dim), dtype=np.float64)
+        if initial_weights is None:
+            weights = np.zeros((feature_dim, output_dim), dtype=np.float64)
+        else:
+            weights = np.ascontiguousarray(initial_weights, dtype=np.float64)
+            if weights.shape != (feature_dim, output_dim):
+                raise ValueError(
+                    f"initial_weights must have shape ({feature_dim}, {output_dim})"
+                )
+            if not np.all(np.isfinite(weights)):
+                raise ValueError("initial_weights must contain only finite values")
+        self._weights = weights.copy()
         self._covariance = (
             np.eye(feature_dim, dtype=np.float64) / self.regularization
         )

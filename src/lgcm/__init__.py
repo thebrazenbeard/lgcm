@@ -15,6 +15,12 @@ from .baselines import (
     PersistencePredictor,
 )
 from .encoders import IdentityFeatureEncoder, RandomFeatureEncoder
+from .model import (
+    BootstrapRecord,
+    ContextualWorldModel,
+    LGCMConfig,
+    UpdateReceipt,
+)
 from .residuals import ResidualScaleTracker
 from .rls import RLSRegressor
 from .types import AdequacyState, Experience, Prediction
@@ -27,11 +33,13 @@ __all__ = [
     "ContextDecisionKind",
     "ContextExpert",
     "ContextGate",
+    "ContextualWorldModel",
     "EWRLSWorldModel",
     "ExpertScore",
     "GlobalRidgeWorldModel",
     "Experience",
     "IdentityFeatureEncoder",
+    "LGCMConfig",
     "ObservationOnlyWorldModel",
     "PageHinkleyDetector",
     "PageHinkleyState",
@@ -40,4 +48,6 @@ __all__ = [
     "RLSRegressor",
     "ResidualScaleTracker",
     "RandomFeatureEncoder",
+    "BootstrapRecord",
+    "UpdateReceipt",
 ]
