@@ -27,9 +27,9 @@ The original one-model cumulative ridge idea remains in the project as a **basel
 
 ## Status
 
-**Pre-implementation / initial build.**
+**Initial implementation / active qualification.**
 
-The architecture has completed hostile design review and the implementation plan is being executed test-first.
+`main` now contains the LGCM-0 Python package and its focused test suite, including baselines, change detection, context gating and recall, fixed encoders, prequential evaluation, bounded model capacity, persistence, restart equivalence, residual experts, and RLS primitives. The architecture has completed hostile design review, but repository source and tests do not by themselves establish broader continual-learning performance or future Vera integration.
 
 See:
 
