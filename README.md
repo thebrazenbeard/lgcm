@@ -1,47 +1,133 @@
-> **License:** Source-visible, not open source. Original material is proprietary. Commercial use, redistribution, hosted-service use, and commercial derivative products require written permission. See [LICENSE](LICENSE) and [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md). Separately identified third-party components retain their own licenses.
+> **License:** Source-visible, not open source. Original material is proprietary. Commercial use, redistribution, hosted-service use, and commercial derivative products require written permission. See [LICENSE](LICENSE) and [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md).
 
 # LGCM
 
-**LGCM** is an experimental learned general cognitive model for **persistent continual learning**.
+**LGCM** is an experimental task-free continual dynamics learner for bounded numerical environments.
 
-The project asks a narrow, falsifiable question before making larger intelligence claims:
+Its core question is deliberately falsifiable:
 
-> Can a learner build an action-conditioned predictive model from an ongoing stream, adapt when the generating process changes, preserve useful prior competence, recover prior internal models when old conditions return, and use the learned model for decision making without being told which task or regime it is in?
+> Can an online learner build an action-conditioned predictive model, adapt when latent dynamics change, preserve useful prior competence, recall a prior internal context when it returns, and use the learned model for bounded planning without being told which task or regime it is in?
 
-LGCM-0 is deliberately bounded. It operates on controlled numerical observation/action vectors and studies continual dynamics learning, context recall, prequential prediction, persistence, and bounded model-based planning. It does **not** claim AGI, general perception, semantics, consciousness, unrestricted agency, or solved representation learning.
+LGCM-0 does **not** claim AGI, general perception, semantic understanding, consciousness, unrestricted agency, or deployment readiness.
 
-## LGCM-0 direction
+## What is implemented
 
-The approved V2 architecture uses:
+Current source includes:
 
-- a slow shared dynamics model;
+- a slow shared action-conditioned RLS dynamics model;
 - persistent context-specific residual experts;
-- label-free context inference from predictive evidence;
-- explicit mismatch detection with switch/spawn consequences;
-- bounded expert capacity with no silent eviction;
-- deterministic fixed feature encoders in V0, with representation learning reserved for later qualification;
-- a baseline ladder that includes persistence, observation-only prediction, global cumulative ridge, and exponentially weighted RLS;
-- prequential evaluation where prediction is fixed before the current outcome can update learner state;
-- restart-continuity tests and evaluator/learner separation;
-- a bounded planner whose results are reported separately from learner quality.
+- label-free expert scoring and switching;
+- Page-Hinkley mismatch detection;
+- bounded expert spawning with explicit capacity exhaustion and no silent eviction;
+- deterministic identity and random-feature encoders;
+- persistence, digest verification, snapshot path confinement, and restart equivalence;
+- prequential evaluation with evaluator/learner separation;
+- persistence, observation-only, global-ridge, and EW-RLS baselines;
+- abrupt, gradual, recurrent, and novel-regime simulator segments;
+- deterministic multi-seed qualification receipts with seed-level and aggregate metrics;
+- bounded seeded random-shooting model-predictive planning that never updates the learner.
 
-The original one-model cumulative ridge idea remains in the project as a **baseline**, not as the LGCM candidate.
+The original single cumulative ridge model is retained as a baseline, not treated as the LGCM candidate.
 
-## Status
+## Quick start
 
-**Initial implementation / active qualification.**
+Requires Python 3.12 or newer.
 
-`main` now contains the LGCM-0 Python package and its focused test suite, including baselines, change detection, context gating and recall, fixed encoders, prequential evaluation, bounded model capacity, persistence, restart equivalence, residual experts, and RLS primitives. The architecture has completed hostile design review, but repository source and tests do not by themselves establish broader continual-learning performance or future Vera integration.
+```text
+python -m venv .venv
+.venv/Scripts/python -m pip install -e ".[dev]"
+.venv/Scripts/python -m pytest -q
+```
 
-See:
+On POSIX systems use `.venv/bin/python`.
 
-- `docs/LGCM_DESIGN_SPEC_V2.md`
-- `docs/plans/2026-09-25-lgcm-0.md`
+A minimal learner:
+
+```python
+import numpy as np
+import lgcm
+
+model = lgcm.ContextualWorldModel(
+    lgcm.LGCMConfig(observation_dim=2, action_dim=1)
+)
+
+prediction = model.predict(
+    np.array([0.1, -0.1]),
+    np.array([0.2]),
+)
+print(prediction.mean)
+```
+
+## Qualification
+
+The qualification runner evaluates the candidate and all four baselines over the same seeded streams:
+
+```python
+import lgcm
+
+result = lgcm.run_qualification(
+    seeds=(0, 1, 2, 3, 4),
+    lengths={"A": 80, "B": 80, "A_RETURN": 80, "C": 80},
+    gradual_modes=(False, True),
+)
+
+print(result.receipt.canonical_json())
+```
+
+The canonical receipt excludes wall-clock timing. Resource timing is available separately through `result.resources`.
+
+Do not infer a broad continual-learning claim from one seed or one aggregate metric. See [docs/EVALUATION_PROTOCOL.md](docs/EVALUATION_PROTOCOL.md).
+
+## Bounded planning
+
+```python
+import numpy as np
+import lgcm
+
+result = lgcm.plan_action(
+    model,
+    np.array([0.1, -0.1]),
+    lambda state: float(np.sum(state * state)),
+    horizon=4,
+    candidates=256,
+    seed=7,
+    lower_bound=-1.0,
+    upper_bound=1.0,
+)
+
+print(result.action, result.score)
+```
+
+Planning calls prediction only. It does not learn from imagined transitions.
+
+## Verification
+
+Repository gates are:
+
+```text
+python -m pytest -q --cov=lgcm --cov-report=term-missing
+ruff check src tests
+python -m mypy src/lgcm
+python -m build --sdist --wheel
+python -m pip check
+```
+
+CI exercises Python 3.12, 3.13, and 3.14 on Ubuntu and Windows. Python 3.15 prerelease compatibility is non-blocking until 3.15 final.
+
+## Documentation
+
+- [Design specification V2](docs/LGCM_DESIGN_SPEC_V2.md)
+- [Evaluation protocol](docs/EVALUATION_PROTOCOL.md)
+- [Reproducibility](docs/REPRODUCIBILITY.md)
+- [Approved qualification-first design](docs/specs/2026-09-27-qualification-first-upgrade-design.md)
+- [Implementation plan](docs/plans/2026-09-27-qualification-foundation.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## Project boundary
 
-LGCM is a standalone research implementation. A future Vera Mono integration is not implied by repository presence and would require separate qualification.
+LGCM is a standalone research implementation. Repository presence does not imply Vera Mono integration, installation, runtime selection, behavioral qualification, or deployment.
 
 ## License
 
-This repository is source-visible but not open source. Noncommercial evaluation, research, security review, interoperability assessment, and contribution preparation are permitted under `LICENSE`. Commercial use requires a separate written license; see `COMMERCIAL_LICENSE.md`.
+This repository is source-visible but not open source. Noncommercial evaluation, research, security review, interoperability assessment, and contribution preparation are permitted under [LICENSE](LICENSE). Commercial use requires a separate written license; see [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md).

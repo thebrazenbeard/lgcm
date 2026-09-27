@@ -44,6 +44,34 @@ def test_contextual_model_public_api_exists():
     assert hasattr(lgcm, "UpdateReceipt")
 
 
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("regularization", 0.0),
+        ("regularization", np.inf),
+        ("shared_forgetting_factor", 0.0),
+        ("shared_forgetting_factor", 1.01),
+        ("expert_forgetting_factor", np.nan),
+        ("residual_decay", 1.0),
+        ("residual_floor", 0.0),
+        ("min_expert_evidence", 0),
+        ("switch_margin", -0.1),
+        ("support_penalty", np.inf),
+        ("spawn_patience", 0),
+        ("mismatch_delta", -0.1),
+        ("mismatch_threshold", 0.0),
+        ("mismatch_min_evidence", 0),
+        ("lower_bound", np.nan),
+        ("upper_bound", np.inf),
+    ],
+)
+def test_config_rejects_invalid_numeric_values(field, value):
+    kwargs = {"observation_dim": 1, "action_dim": 1}
+    kwargs[field] = value
+    with pytest.raises(ValueError):
+        lgcm.LGCMConfig(**kwargs)
+
+
 def test_predict_is_read_only_and_first_expert_is_neutral_internal_context():
     model = lgcm.ContextualWorldModel(_cfg())
     before = model.expert_weights(0)

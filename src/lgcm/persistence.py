@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import tempfile
 from collections import deque
 from dataclasses import asdict, dataclass
 from hashlib import sha256
-import json
-import os
-from pathlib import Path
-import shutil
-import tempfile
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import numpy as np
 
@@ -34,6 +34,27 @@ def _digest(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _payload_path(root: Path, name: str) -> Path:
+    if not isinstance(name, str) or not name:
+        raise ValueError("snapshot payload name must be a non-empty string")
+    posix = PurePosixPath(name)
+    windows = PureWindowsPath(name)
+    if (
+        posix.is_absolute()
+        or windows.is_absolute()
+        or len(posix.parts) != 1
+        or len(windows.parts) != 1
+    ):
+        raise ValueError(f"snapshot payload path is not confined: {name}")
+    return root / name
+
+
+def _nonnegative_int(value, *, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
 
 
 def _save_array(root: Path, name: str, value) -> str:
@@ -222,8 +243,16 @@ def save_snapshot(
         raise
 
 
-def _load_array(root: Path, name: str) -> np.ndarray:
-    value = np.load(root / name, allow_pickle=False)
+def _load_array(
+    root: Path,
+    name: str,
+    *,
+    manifest_files: set[str],
+) -> np.ndarray:
+    payload = _payload_path(root, name)
+    if name not in manifest_files:
+        raise ValueError(f"snapshot payload is not bound by manifest: {name}")
+    value = np.load(payload, allow_pickle=False)
     value = np.ascontiguousarray(value, dtype=np.float64)
     if not np.all(np.isfinite(value)):
         raise ValueError(f"snapshot array {name} contains non-finite values")
@@ -249,8 +278,13 @@ def _restore_regressor(
     )
     if covariance.shape != (feature_dim, feature_dim):
         raise ValueError("snapshot covariance shape mismatch")
+    if not np.allclose(covariance, covariance.T, rtol=0.0, atol=1e-12):
+        raise ValueError("snapshot covariance must be symmetric")
     model._covariance = covariance.copy()
-    model.evidence_count = int(evidence_count)
+    model.evidence_count = _nonnegative_int(
+        evidence_count,
+        name="regressor evidence_count",
+    )
     return model
 
 
@@ -264,19 +298,27 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
         raise ValueError("unsupported snapshot schema version")
     if manifest.get("model_type") != "ContextualWorldModel":
         raise ValueError("unsupported snapshot model type")
-    for name, expected in manifest.get("files", {}).items():
-        payload = root / name
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError("snapshot manifest files must be a non-empty mapping")
+    manifest_files: set[str] = set()
+    for name, expected in files.items():
+        payload = _payload_path(root, name)
+        manifest_files.add(name)
         if not payload.is_file():
             raise ValueError(f"snapshot payload missing: {name}")
         actual = _digest(payload)
         if actual != expected:
             raise ValueError(f"snapshot digest mismatch: {name}")
+    if "state.json" not in manifest_files:
+        raise ValueError("snapshot state is not bound by manifest")
 
-    state = json.loads((root / "state.json").read_text(encoding="utf-8"))
+    state = json.loads(_payload_path(root, "state.json").read_text(encoding="utf-8"))
     if state.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("unsupported snapshot state schema version")
     config = LGCMConfig(**state["config"])
     encoder_meta = state["encoder"]
+    encoder: IdentityFeatureEncoder | RandomFeatureEncoder
     if encoder_meta["type"] == "identity":
         encoder = IdentityFeatureEncoder(
             encoder_meta["observation_dim"],
@@ -294,7 +336,11 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
             lower_bound=encoder_meta["lower_bound"],
             upper_bound=encoder_meta["upper_bound"],
         )
-        projection = _load_array(root, encoder_meta["projection_file"])
+        projection = _load_array(
+            root,
+            encoder_meta["projection_file"],
+            manifest_files=manifest_files,
+        )
         if projection.shape != encoder.projection.shape:
             raise ValueError("snapshot encoder projection shape mismatch")
         encoder._projection = projection.copy()
@@ -308,21 +354,39 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
         config.observation_dim,
         regularization=config.regularization,
         forgetting_factor=config.shared_forgetting_factor,
-        weights=_load_array(root, "shared_weights.npy"),
-        covariance=_load_array(root, "shared_covariance.npy"),
+        weights=_load_array(
+            root,
+            "shared_weights.npy",
+            manifest_files=manifest_files,
+        ),
+        covariance=_load_array(
+            root,
+            "shared_covariance.npy",
+            manifest_files=manifest_files,
+        ),
         evidence_count=state["shared_evidence_count"],
     )
 
     experts: dict[int, ContextExpert] = {}
     for meta in state["experts"]:
-        expert_id = int(meta["expert_id"])
+        expert_id = _nonnegative_int(meta["expert_id"], name="expert_id")
+        if expert_id in experts:
+            raise ValueError(f"duplicate snapshot expert_id: {expert_id}")
         regressor = _restore_regressor(
             encoder.feature_dim,
             config.observation_dim,
             regularization=config.regularization,
             forgetting_factor=config.expert_forgetting_factor,
-            weights=_load_array(root, meta["weights_file"]),
-            covariance=_load_array(root, meta["covariance_file"]),
+            weights=_load_array(
+                root,
+                meta["weights_file"],
+                manifest_files=manifest_files,
+            ),
+            covariance=_load_array(
+                root,
+                meta["covariance_file"],
+                manifest_files=manifest_files,
+            ),
             evidence_count=meta["regressor_evidence_count"],
         )
         tracker = ResidualScaleTracker(
@@ -331,11 +395,18 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
             floor=meta["residual_floor"],
             min_evidence=meta["residual_min_evidence"],
         )
-        residual_mse = _load_array(root, meta["residual_file"])
+        residual_mse = _load_array(
+            root,
+            meta["residual_file"],
+            manifest_files=manifest_files,
+        )
         if residual_mse.shape != (config.observation_dim,):
             raise ValueError("snapshot residual scale shape mismatch")
         tracker._mean_square = residual_mse.copy()
-        tracker.evidence_count = int(meta["residual_evidence_count"])
+        tracker.evidence_count = _nonnegative_int(
+            meta["residual_evidence_count"],
+            name="residual evidence_count",
+        )
         experts[expert_id] = ContextExpert(expert_id, regressor, tracker)
     if not experts:
         raise ValueError("snapshot contains no context experts")
@@ -348,7 +419,10 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
         support_penalty=gate_meta["support_penalty"],
         spawn_patience=gate_meta["spawn_patience"],
     )
-    model._gate._unexplained_streak = int(gate_meta["unexplained_streak"])
+    model._gate._unexplained_streak = _nonnegative_int(
+        gate_meta["unexplained_streak"],
+        name="gate unexplained_streak",
+    )
 
     mismatch_meta = state["mismatch"]
     model._mismatch = PageHinkleyDetector(
@@ -356,27 +430,66 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
         threshold=mismatch_meta["threshold"],
         min_evidence=mismatch_meta["min_evidence"],
     )
-    model._mismatch._count = int(mismatch_meta["count"])
-    model._mismatch._mean = float(mismatch_meta["mean"])
-    model._mismatch._cumulative = float(mismatch_meta["cumulative"])
-    model._mismatch._minimum_cumulative = float(
-        mismatch_meta["minimum_cumulative"]
+    model._mismatch._count = _nonnegative_int(
+        mismatch_meta["count"],
+        name="mismatch count",
     )
+    mismatch_values = (
+        float(mismatch_meta["mean"]),
+        float(mismatch_meta["cumulative"]),
+        float(mismatch_meta["minimum_cumulative"]),
+    )
+    if not np.all(np.isfinite(mismatch_values)):
+        raise ValueError("snapshot mismatch state must be finite")
+    model._mismatch._mean = mismatch_values[0]
+    model._mismatch._cumulative = mismatch_values[1]
+    model._mismatch._minimum_cumulative = mismatch_values[2]
 
-    bootstrap_features = _load_array(root, "bootstrap_features.npy")
-    bootstrap_targets = _load_array(root, "bootstrap_targets.npy")
-    if bootstrap_features.shape[0] != bootstrap_targets.shape[0]:
-        raise ValueError("snapshot bootstrap length mismatch")
+    bootstrap_features = _load_array(
+        root,
+        "bootstrap_features.npy",
+        manifest_files=manifest_files,
+    )
+    bootstrap_targets = _load_array(
+        root,
+        "bootstrap_targets.npy",
+        manifest_files=manifest_files,
+    )
+    if bootstrap_features.shape != (
+        bootstrap_targets.shape[0],
+        encoder.feature_dim,
+    ):
+        raise ValueError("snapshot bootstrap feature shape mismatch")
+    if bootstrap_targets.shape != (
+        bootstrap_features.shape[0],
+        config.observation_dim,
+    ):
+        raise ValueError("snapshot bootstrap target shape mismatch")
     model._bootstrap = deque(maxlen=config.bootstrap_size)
     for features, target in zip(bootstrap_features, bootstrap_targets):
         model._bootstrap.append(BootstrapRecord(features, target))
 
-    model._active_expert_id = int(state["active_expert_id"])
+    model._active_expert_id = _nonnegative_int(
+        state["active_expert_id"],
+        name="active_expert_id",
+    )
     if model._active_expert_id not in model._experts:
         raise ValueError("snapshot active expert is missing")
-    model._next_expert_id = int(state["next_expert_id"])
-    model.generation = int(state["generation"])
-    model.last_sequence = int(state["last_sequence"])
+    model._next_expert_id = _nonnegative_int(
+        state["next_expert_id"],
+        name="next_expert_id",
+    )
+    if model._next_expert_id <= max(model._experts):
+        raise ValueError("snapshot next_expert_id must exceed existing expert ids")
+    model.generation = _nonnegative_int(state["generation"], name="generation")
+    last_sequence = state["last_sequence"]
+    if (
+        isinstance(last_sequence, bool)
+        or not isinstance(last_sequence, int)
+        or last_sequence < -1
+    ):
+        raise ValueError("last_sequence must be an integer >= -1")
+    model.last_sequence = last_sequence
     model._capacity_exhausted = bool(state["capacity_exhausted"])
     model._last_decision = ContextDecisionKind(state["last_decision"])
     return model

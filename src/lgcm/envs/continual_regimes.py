@@ -75,7 +75,14 @@ def make_continual_regime_stream(
     events: list[EvaluatorEvent] = []
     sequence = 0
 
-    def emit(regime_label: str, dynamics_regime: str, count: int, *, blend=None):
+    def emit(
+        regime_label: str,
+        dynamics_regime: str,
+        count: int,
+        *,
+        segment: str,
+        blend=None,
+    ):
         nonlocal state, sequence
         for i in range(count):
             action = rng.uniform(-1.0, 1.0, size=1).astype(np.float64)
@@ -96,20 +103,27 @@ def make_continual_regime_stream(
                 next_observation=next_state.copy(),
                 source="simulator",
             )
-            events.append(EvaluatorEvent(experience=experience, regime=regime_label))
+            events.append(
+                EvaluatorEvent(
+                    experience=experience,
+                    regime=regime_label,
+                    segment=segment,
+                )
+            )
             state = next_state
             sequence += 1
 
-    emit("A", "A", int(lengths["A"]))
+    emit("A", "A", int(lengths["A"]), segment="A_INITIAL")
     if gradual:
         denom = max(1, drift_steps - 1)
         emit(
             "A_TO_B_DRIFT",
             "A",
             drift_steps,
+            segment="A_TO_B_DRIFT",
             blend=lambda i: i / denom,
         )
-    emit("B", "B", int(lengths["B"]))
-    emit("A", "A", int(lengths["A_RETURN"]))
-    emit("C", "C", int(lengths["C"]))
+    emit("B", "B", int(lengths["B"]), segment="B")
+    emit("A", "A", int(lengths["A_RETURN"]), segment="A_RETURN")
+    emit("C", "C", int(lengths["C"]), segment="C")
     return tuple(events)

@@ -43,14 +43,44 @@ class LGCMConfig:
     def __post_init__(self) -> None:
         if self.observation_dim <= 0 or self.action_dim <= 0:
             raise ValueError("observation_dim and action_dim must be positive")
+        if not np.isfinite(self.regularization) or self.regularization <= 0:
+            raise ValueError("regularization must be finite and positive")
+        for name, value in (
+            ("shared_forgetting_factor", self.shared_forgetting_factor),
+            ("expert_forgetting_factor", self.expert_forgetting_factor),
+        ):
+            if not np.isfinite(value) or not 0 < value <= 1:
+                raise ValueError(f"{name} must satisfy 0 < value <= 1")
+        if not np.isfinite(self.residual_decay) or not 0 <= self.residual_decay < 1:
+            raise ValueError("residual_decay must satisfy 0 <= value < 1")
+        if not np.isfinite(self.residual_floor) or self.residual_floor <= 0:
+            raise ValueError("residual_floor must be finite and positive")
+        if self.min_expert_evidence < 1:
+            raise ValueError("min_expert_evidence must be positive")
         if self.max_experts < 1:
             raise ValueError("max_experts must be positive")
+        if not np.isfinite(self.switch_margin) or self.switch_margin < 0:
+            raise ValueError("switch_margin must be finite and non-negative")
+        if not np.isfinite(self.support_penalty) or self.support_penalty < 0:
+            raise ValueError("support_penalty must be finite and non-negative")
+        if self.spawn_patience < 1:
+            raise ValueError("spawn_patience must be positive")
+        if not np.isfinite(self.mismatch_delta) or self.mismatch_delta < 0:
+            raise ValueError("mismatch_delta must be finite and non-negative")
+        if not np.isfinite(self.mismatch_threshold) or self.mismatch_threshold <= 0:
+            raise ValueError("mismatch_threshold must be finite and positive")
+        if self.mismatch_min_evidence < 1:
+            raise ValueError("mismatch_min_evidence must be positive")
         if self.bootstrap_size < 1:
             raise ValueError("bootstrap_size must be positive")
         if self.new_expert_init not in {"neutral", "shared_prior"}:
             raise ValueError("new_expert_init must be neutral or shared_prior")
-        if not self.lower_bound < self.upper_bound:
-            raise ValueError("lower_bound must be less than upper_bound")
+        if (
+            not np.isfinite(self.lower_bound)
+            or not np.isfinite(self.upper_bound)
+            or not self.lower_bound < self.upper_bound
+        ):
+            raise ValueError("bounds must be finite and lower_bound < upper_bound")
 
 
 @dataclass(frozen=True)
@@ -120,6 +150,7 @@ class ContextualWorldModel:
         self.last_sequence = -1
         self._capacity_exhausted = False
         self._last_decision = ContextDecisionKind.KEEP
+        self._update_in_progress = False
 
     def _new_expert(self, expert_id: int, *, initial_weights) -> ContextExpert:
         regressor = RLSRegressor(
@@ -213,6 +244,15 @@ class ContextualWorldModel:
         return expert_id
 
     def update(self, experience: Experience) -> UpdateReceipt:
+        if self._update_in_progress:
+            raise RuntimeError("LGCM update already in progress")
+        self._update_in_progress = True
+        try:
+            return self._update_once(experience)
+        finally:
+            self._update_in_progress = False
+
+    def _update_once(self, experience: Experience) -> UpdateReceipt:
         if self._capacity_exhausted:
             raise RuntimeError("LGCM context capacity exhausted")
         if experience.sequence <= self.last_sequence:

@@ -1,0 +1,90 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Tests and coverage
+        run: python -m pytest -q --cov=lgcm --cov-report=term-missing
+
+      - name: Ruff
+        run: ruff check src tests
+
+      - name: Mypy
+        run: python -m mypy src/lgcm
+
+      - name: Dependency check
+        run: python -m pip check
+
+      - name: Build distributions
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        run: python -m build --sdist --wheel
+
+      - name: Installed-wheel smoke
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        shell: bash
+        run: |
+          python -m pip install --force-reinstall --no-deps dist/*.whl
+          python - <<'PY'
+          import numpy as np
+          import lgcm
+
+          model = lgcm.ContextualWorldModel(
+              lgcm.LGCMConfig(observation_dim=1, action_dim=1)
+          )
+          prediction = model.predict(np.array([0.0]), np.array([0.0]))
+          assert prediction.mean.shape == (1,)
+          print(lgcm.__version__)
+          PY
+
+  python-next:
+    name: Python 3.15 prerelease
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+          allow-prereleases: true
+          cache: pip
+
+      - name: Compatibility smoke
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pytest -q
+          ruff check src tests
+          python -m mypy src/lgcm

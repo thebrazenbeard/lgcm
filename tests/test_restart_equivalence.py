@@ -68,11 +68,11 @@ def test_restart_preserves_predictions_gating_and_continuation(tmp_path: Path):
         assert abs(left.mismatch_score - right.mismatch_score) <= 1e-12
 
     for value in [0.6] * 8 + [-0.6] * 8:
-        l = original.update(_event(seq, value))
-        r = restored.update(_event(seq, value))
-        assert l.decision is r.decision
-        assert l.active_expert == r.active_expert
-        assert l.expert_count == r.expert_count
+        left_receipt = original.update(_event(seq, value))
+        right_receipt = restored.update(_event(seq, value))
+        assert left_receipt.decision is right_receipt.decision
+        assert left_receipt.active_expert == right_receipt.active_expert
+        assert left_receipt.expert_count == right_receipt.expert_count
         np.testing.assert_allclose(
             original.predict(np.array([0.0]), np.array([0.0])).mean,
             restored.predict(np.array([0.0]), np.array([0.0])).mean,

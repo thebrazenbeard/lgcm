@@ -17,7 +17,7 @@ class AdequacyState(str, Enum):
 
 
 def _readonly_vector(value: NDArray[np.float64] | list[float] | tuple[float, ...], *, name: str) -> FloatVector:
-    array = np.ascontiguousarray(value, dtype=np.float64)
+    array = np.array(value, dtype=np.float64, copy=True, order="C")
     if array.ndim != 1:
         raise ValueError(f"{name} must be one-dimensional")
     if not np.all(np.isfinite(array)):
