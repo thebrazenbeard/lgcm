@@ -85,7 +85,8 @@ def save_snapshot(
     temp = Path(
         tempfile.mkdtemp(prefix=f".{target.name}.tmp-", dir=str(target.parent))
     )
-    backup: Path | None = None
+    # Never use a predictable sibling name: it may already contain user data.
+    backup_dir: Path | None = None
     try:
         encoder = _encoder_state(model, temp)
         arrays: list[str] = []
@@ -204,13 +205,15 @@ def save_snapshot(
         )
 
         if target.exists():
-            backup = target.with_name(target.name + ".backup")
-            if backup.exists():
-                shutil.rmtree(backup)
-            os.replace(target, backup)
+            backup_dir = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{target.name}.backup-", dir=str(target.parent)
+                )
+            )
+            os.replace(target, backup_dir / "previous")
         os.replace(temp, target)
-        if backup is not None and backup.exists():
-            shutil.rmtree(backup)
+        if backup_dir is not None:
+            shutil.rmtree(backup_dir)
 
         return SnapshotReceipt(
             path=target,
@@ -220,13 +223,47 @@ def save_snapshot(
     except Exception:
         if temp.exists():
             shutil.rmtree(temp, ignore_errors=True)
-        if backup is not None and backup.exists() and not target.exists():
-            os.replace(backup, target)
+        if backup_dir is not None:
+            previous = backup_dir / "previous"
+            if previous.exists() and not target.exists():
+                os.replace(previous, target)
+            # Preserve the old snapshot if rollback could not complete.
+            if not previous.exists() and backup_dir.exists():
+                shutil.rmtree(backup_dir, ignore_errors=True)
         raise
 
 
-def _load_array(root: Path, name: str) -> np.ndarray:
-    value = np.load(root / name, allow_pickle=False)
+def _snapshot_file(
+    root: Path, name: str, allowed: dict[str, str] | None = None
+) -> Path:
+    """Confine snapshot payload references to signed-off, flat local files."""
+    if (
+        not isinstance(name, str)
+        or not name
+        or name in {".", ".."}
+        or "/" in name
+        or "\\" in name
+        or ":" in name
+        or "\x00" in name
+        or Path(name).is_absolute()
+    ):
+        raise ValueError("unsafe snapshot payload path/name")
+    if allowed is not None and name not in allowed:
+        raise ValueError(f"snapshot payload name missing from manifest: {name}")
+    path = root / name
+    if path.is_symlink():
+        raise ValueError(f"snapshot payload link is forbidden: {name}")
+    if not path.is_file():
+        raise ValueError(f"snapshot payload missing: {name}")
+    if path.stat().st_nlink != 1:
+        raise ValueError(f"snapshot payload hardlink is forbidden: {name}")
+    if path.resolve(strict=True).parent != root.resolve(strict=True):
+        raise ValueError(f"unsafe snapshot payload path: {name}")
+    return path
+
+
+def _load_array(root: Path, name: str, allowed: dict[str, str]) -> np.ndarray:
+    value = np.load(_snapshot_file(root, name, allowed), allow_pickle=False)
     value = np.ascontiguousarray(value, dtype=np.float64)
     if not np.all(np.isfinite(value)):
         raise ValueError(f"snapshot array {name} contains non-finite values")
@@ -259,23 +296,24 @@ def _restore_regressor(
 
 def load_snapshot(path: str | Path) -> ContextualWorldModel:
     root = Path(path)
-    manifest_path = root / "manifest.json"
-    if not manifest_path.is_file():
-        raise ValueError("snapshot manifest is missing")
+    manifest_path = _snapshot_file(root, "manifest.json")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("unsupported snapshot schema version")
     if manifest.get("model_type") != "ContextualWorldModel":
         raise ValueError("unsupported snapshot model type")
-    for name, expected in manifest.get("files", {}).items():
-        payload = root / name
-        if not payload.is_file():
-            raise ValueError(f"snapshot payload missing: {name}")
+    manifest_files = manifest.get("files")
+    if not isinstance(manifest_files, dict):
+        raise ValueError("snapshot manifest files must be an object")
+    for name, expected in manifest_files.items():
+        payload = _snapshot_file(root, name, manifest_files)
         actual = _digest(payload)
         if actual != expected:
             raise ValueError(f"snapshot digest mismatch: {name}")
 
-    state = json.loads((root / "state.json").read_text(encoding="utf-8"))
+    state = json.loads(
+        _snapshot_file(root, "state.json", manifest_files).read_text(encoding="utf-8")
+    )
     if state.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("unsupported snapshot state schema version")
     config = LGCMConfig(**state["config"])
@@ -297,7 +335,7 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
             lower_bound=encoder_meta["lower_bound"],
             upper_bound=encoder_meta["upper_bound"],
         )
-        projection = _load_array(root, encoder_meta["projection_file"])
+        projection = _load_array(root, encoder_meta["projection_file"], manifest_files)
         if projection.shape != encoder.projection.shape:
             raise ValueError("snapshot encoder projection shape mismatch")
         encoder._projection = projection.copy()
@@ -311,8 +349,8 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
         config.observation_dim,
         regularization=config.regularization,
         forgetting_factor=config.shared_forgetting_factor,
-        weights=_load_array(root, "shared_weights.npy"),
-        covariance=_load_array(root, "shared_covariance.npy"),
+        weights=_load_array(root, "shared_weights.npy", manifest_files),
+        covariance=_load_array(root, "shared_covariance.npy", manifest_files),
         evidence_count=state["shared_evidence_count"],
     )
 
@@ -324,8 +362,8 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
             config.observation_dim,
             regularization=config.regularization,
             forgetting_factor=config.expert_forgetting_factor,
-            weights=_load_array(root, meta["weights_file"]),
-            covariance=_load_array(root, meta["covariance_file"]),
+            weights=_load_array(root, meta["weights_file"], manifest_files),
+            covariance=_load_array(root, meta["covariance_file"], manifest_files),
             evidence_count=meta["regressor_evidence_count"],
         )
         tracker = ResidualScaleTracker(
@@ -334,7 +372,7 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
             floor=meta["residual_floor"],
             min_evidence=meta["residual_min_evidence"],
         )
-        residual_mse = _load_array(root, meta["residual_file"])
+        residual_mse = _load_array(root, meta["residual_file"], manifest_files)
         if residual_mse.shape != (config.observation_dim,):
             raise ValueError("snapshot residual scale shape mismatch")
         tracker._mean_square = residual_mse.copy()
@@ -370,8 +408,8 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
         mismatch_meta["minimum_cumulative"]
     )
 
-    bootstrap_features = _load_array(root, "bootstrap_features.npy")
-    bootstrap_targets = _load_array(root, "bootstrap_targets.npy")
+    bootstrap_features = _load_array(root, "bootstrap_features.npy", manifest_files)
+    bootstrap_targets = _load_array(root, "bootstrap_targets.npy", manifest_files)
     if bootstrap_features.shape[0] != bootstrap_targets.shape[0]:
         raise ValueError("snapshot bootstrap length mismatch")
     model._bootstrap = deque(maxlen=config.bootstrap_size)
