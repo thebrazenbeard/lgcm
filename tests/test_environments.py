@@ -30,7 +30,9 @@ def test_continual_stream_hides_regime_from_experience_and_repeats_a():
     labels = [event.regime for event in stream]
     assert labels[:6] == ["A"] * 6
     assert labels[6:11] == ["B"] * 5
-    assert labels[11:15] == ["A"] * 4
+    # Evaluator metadata must distinguish initial exposure from return.
+    # The learner still receives only the numeric experience, never labels.
+    assert labels[11:15] == ["A_RETURN"] * 4
     assert labels[15:] == ["C"] * 5
     for event in stream:
         assert not hasattr(event.experience, "regime")

@@ -51,6 +51,7 @@ class ContextGate:
         switch_margin: float,
         support_penalty: float,
         spawn_patience: int,
+        max_recall_standardized_error: float = 3.0,
     ) -> None:
         if max_experts < 1:
             raise ValueError("max_experts must be positive")
@@ -60,10 +61,16 @@ class ContextGate:
             raise ValueError("support_penalty must be finite and non-negative")
         if spawn_patience < 1:
             raise ValueError("spawn_patience must be positive")
+        if (
+            not np.isfinite(max_recall_standardized_error)
+            or max_recall_standardized_error <= 0
+        ):
+            raise ValueError("max_recall_standardized_error must be finite and positive")
         self.max_experts = int(max_experts)
         self.switch_margin = float(switch_margin)
         self.support_penalty = float(support_penalty)
         self.spawn_patience = int(spawn_patience)
+        self.max_recall_standardized_error = float(max_recall_standardized_error)
         self._unexplained_streak = 0
 
     @property
@@ -128,7 +135,13 @@ class ContextGate:
         candidates = [
             score
             for score in scores
-            if score.expert_id != active_expert_id and score.adequate
+            if (
+                score.expert_id != active_expert_id
+                and score.adequate
+                # Being merely less wrong than the active expert is not
+                # evidence that this is a previously learned context.
+                and score.standardized_error <= self.max_recall_standardized_error
+            )
         ]
         if candidates:
             best = min(candidates, key=lambda item: item.total_score)

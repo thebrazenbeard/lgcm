@@ -31,6 +31,7 @@ class LGCMConfig:
     max_experts: int = 8
     switch_margin: float = 0.25
     support_penalty: float = 0.25
+    max_recall_standardized_error: float = 3.0
     spawn_patience: int = 2
     mismatch_delta: float = 0.05
     mismatch_threshold: float = 5.0
@@ -49,6 +50,11 @@ class LGCMConfig:
             raise ValueError("bootstrap_size must be positive")
         if self.new_expert_init not in {"neutral", "shared_prior"}:
             raise ValueError("new_expert_init must be neutral or shared_prior")
+        if (
+            not np.isfinite(self.max_recall_standardized_error)
+            or self.max_recall_standardized_error <= 0
+        ):
+            raise ValueError("max_recall_standardized_error must be finite and positive")
         if not self.lower_bound < self.upper_bound:
             raise ValueError("lower_bound must be less than upper_bound")
 
@@ -107,6 +113,7 @@ class ContextualWorldModel:
             switch_margin=config.switch_margin,
             support_penalty=config.support_penalty,
             spawn_patience=config.spawn_patience,
+            max_recall_standardized_error=config.max_recall_standardized_error,
         )
         self._mismatch = PageHinkleyDetector(
             delta=config.mismatch_delta,
