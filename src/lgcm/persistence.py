@@ -165,6 +165,9 @@ def save_snapshot(
                 "switch_margin": model._gate.switch_margin,
                 "support_penalty": model._gate.support_penalty,
                 "spawn_patience": model._gate.spawn_patience,
+                "max_recall_standardized_error": (
+                    model._gate.max_recall_standardized_error
+                ),
                 "unexplained_streak": model._gate.unexplained_streak,
             },
             "mismatch": {
@@ -347,6 +350,10 @@ def load_snapshot(path: str | Path) -> ContextualWorldModel:
         switch_margin=gate_meta["switch_margin"],
         support_penalty=gate_meta["support_penalty"],
         spawn_patience=gate_meta["spawn_patience"],
+        max_recall_standardized_error=gate_meta.get(
+            "max_recall_standardized_error",
+            config.max_recall_standardized_error,
+        ),
     )
     model._gate._unexplained_streak = int(gate_meta["unexplained_streak"])
 

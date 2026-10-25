@@ -110,6 +110,8 @@ def make_continual_regime_stream(
             blend=lambda i: i / denom,
         )
     emit("B", "B", int(lengths["B"]))
-    emit("A", "A", int(lengths["A_RETURN"]))
+    # Return uses A dynamics but remains a distinct evaluator-only phase,
+    # so forgetting and reacquisition cannot be averaged with initial A.
+    emit("A_RETURN", "A", int(lengths["A_RETURN"]))
     emit("C", "C", int(lengths["C"]))
     return tuple(events)
