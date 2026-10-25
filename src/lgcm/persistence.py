@@ -236,7 +236,7 @@ def save_snapshot(
 def _snapshot_file(
     root: Path, name: str, allowed: dict[str, str] | None = None
 ) -> Path:
-    """Confine snapshot payload references to signed-off, flat local files."""
+    """Confine snapshot payload references to manifest-listed, flat local files."""
     if (
         not isinstance(name, str)
         or not name
