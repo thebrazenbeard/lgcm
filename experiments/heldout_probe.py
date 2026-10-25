@@ -16,7 +16,13 @@ import lgcm
 
 SEEDS = (11, 23, 41, 59)
 LENGTHS = {"A": 100, "B": 100, "A_RETURN": 100, "C": 100}
-PHASES = ("A_initial", "B", "A_return", "C")
+PHASE_LABELS = {
+    "A": "A_initial",
+    "A_TO_B_DRIFT": "A_to_B_drift",
+    "B": "B",
+    "A_RETURN": "A_return",
+    "C": "C",
+}
 
 
 def _models():
@@ -30,34 +36,48 @@ def _models():
 
 
 def measure(model, stream, *, gradual):
+    # The existing gradual argument is retained for callers; event labels,
+    # not fixed durations or a mode flag, define the reporting intervals.
+    events = tuple(stream)
+    expected = {label: 0 for label in PHASE_LABELS.values()}
+    phase_errors = {label: [] for label in PHASE_LABELS.values()}
+    for event in events:
+        if event.regime not in PHASE_LABELS:
+            raise ValueError(f"unknown evaluation regime: {event.regime}")
+        expected[PHASE_LABELS[event.regime]] += 1
+
     errors = []
     terminal = None
-    for event in stream:
+    for event in events:
         experience = event.experience
         pred = model.predict(experience.observation, experience.action)
-        errors.append(float(np.mean((pred.mean - experience.next_observation) ** 2)))
+        error = float(np.mean((pred.mean - experience.next_observation) ** 2))
+        errors.append(error)
+        phase_errors[PHASE_LABELS[event.regime]].append(error)
         try:
             model.update(experience)
         except RuntimeError as exc:
             terminal = {"sequence": experience.sequence, "error": str(exc)}
             break
 
-    by_phase = {}
-    first = 0
-    sizes = [LENGTHS[key] for key in ("A", "B", "A_RETURN", "C")]
-    labels = list(PHASES)
-    if gradual:
-        sizes.insert(1, 8)
-        labels.insert(1, "A_to_B_drift")
-    for label, size in zip(labels, sizes, strict=True):
-        phase = errors[first : first + size]
-        by_phase[label] = round(mean(phase), 8) if len(phase) == size else None
-        first += size
+    by_phase = {
+        label: (
+            round(mean(phase_errors[label]), 8)
+            if len(phase_errors[label]) == count
+            else None
+        )
+        for label, count in expected.items()
+        if count
+    }
     return {
         "steps_scored": len(errors),
         "terminal": terminal,
         "phase_mse": by_phase,
-        "overall_mse": round(mean(errors), 8) if errors else None,
+        "overall_mse": (
+            round(mean(errors), 8)
+            if terminal is None and len(errors) == len(events) and errors
+            else None
+        ),
         "expert_count": len(model.expert_ids) if hasattr(model, "expert_ids") else None,
     }
 
