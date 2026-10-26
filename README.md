@@ -43,6 +43,13 @@ equivalence, residual experts, and RLS primitives. Source and tests do not by
 themselves establish broader continual-learning performance or future Vera
 integration.
 
+`update()` and `save_snapshot()` serialize access to a model instance so a
+snapshot records a complete committed update, not mixed expert/shared weights
+from two generations. This is an **in-process** guarantee; snapshots of the
+same destination from separate processes or model instances require external
+coordination. Snapshots do not provide transactional rollback if an update
+itself fails after modifying model state.
+
 ## Reproduce bounded evidence
 
 Use Python 3.12+ with NumPy 2+ and pytest 8+ in an isolated environment.

@@ -74,8 +74,16 @@ def save_snapshot(
     *,
     overwrite: bool = False,
 ) -> SnapshotReceipt:
-    if getattr(model, "_update_in_progress", False):
-        raise RuntimeError("snapshot requires a committed generation boundary")
+    with model._state_lock:
+        return _save_snapshot_unlocked(model, path, overwrite=overwrite)
+
+
+def _save_snapshot_unlocked(
+    model: ContextualWorldModel,
+    path: str | Path,
+    *,
+    overwrite: bool = False,
+) -> SnapshotReceipt:
 
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
