@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+from threading import RLock
 
 import numpy as np
 from numpy.typing import NDArray
@@ -91,6 +92,8 @@ class UpdateReceipt:
 class ContextualWorldModel:
     def __init__(self, config: LGCMConfig, *, encoder=None) -> None:
         self.config = config
+        # Serialize updates with snapshot capture at committed boundaries.
+        self._state_lock = RLock()
         self.encoder = encoder or IdentityFeatureEncoder(
             config.observation_dim,
             config.action_dim,
@@ -220,6 +223,10 @@ class ContextualWorldModel:
         return expert_id
 
     def update(self, experience: Experience) -> UpdateReceipt:
+        with self._state_lock:
+            return self._update_unlocked(experience)
+
+    def _update_unlocked(self, experience: Experience) -> UpdateReceipt:
         if self._capacity_exhausted:
             raise RuntimeError("LGCM context capacity exhausted")
         if experience.sequence <= self.last_sequence:
