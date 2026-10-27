@@ -175,6 +175,13 @@ class ContextualWorldModel:
             raise ValueError("next_observation must remain inside configured bounds")
 
     def predict(self, observation, action) -> Prediction:
+        # The regressor, active-expert routing, and adequacy tracker form one
+        # committed prediction state. An update must not change any of them
+        # between the feature prediction and the returned metadata.
+        with self._state_lock:
+            return self._predict_unlocked(observation, action)
+
+    def _predict_unlocked(self, observation, action) -> Prediction:
         phi = self.encoder.encode(observation, action)
         expert = self._active_expert()
         delta = expert.regressor.predict(phi)
