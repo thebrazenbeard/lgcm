@@ -149,18 +149,22 @@ class ContextualWorldModel:
 
     @property
     def active_expert_id(self) -> int:
-        return self._active_expert_id
+        with self._state_lock:
+            return self._active_expert_id
 
     @property
     def expert_ids(self) -> tuple[int, ...]:
-        return tuple(sorted(self._experts))
+        with self._state_lock:
+            return tuple(sorted(self._experts))
 
     def expert_weights(self, expert_id: int) -> NDArray[np.float64]:
-        return self._experts[expert_id].regressor.weights
+        with self._state_lock:
+            return self._experts[expert_id].regressor.weights
 
     @property
     def shared_weights(self) -> NDArray[np.float64]:
-        return self._shared.weights
+        with self._state_lock:
+            return self._shared.weights
 
     def _active_expert(self) -> ContextExpert:
         return self._experts[self._active_expert_id]
