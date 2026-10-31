@@ -26,6 +26,9 @@ The `lgcm` Python package exposes a `ContextualWorldModel` configured by `LGCMCo
 Use Python 3.12+ and NumPy 2+. From a checkout, `PYTHONPATH=src` makes the package importable without installing it. The example is intentionally synthetic; replace its bounded numerical vectors and recorded transitions with your own validated data stream.
 
 ```python
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 from lgcm import (
     ContextualWorldModel,
     Experience,
@@ -50,10 +53,12 @@ receipt = model.update(
     )
 )
 
-# Creates a new local snapshot directory; existing targets are not overwritten.
-save_snapshot(model, "./lgcm-snapshot")
-restored = load_snapshot("./lgcm-snapshot")
-assert restored.last_sequence == receipt.sequence
+# Save to a fresh temporary path, avoiding pre-existing checkout artifacts.
+with TemporaryDirectory(prefix="lgcm-example-") as temp_dir:
+    snapshot_path = Path(temp_dir) / "snapshot"
+    save_snapshot(model, snapshot_path)
+    restored = load_snapshot(snapshot_path)
+    assert restored.last_sequence == receipt.sequence
 ```
 
 `prediction.mean` is the predicted next-observation vector; `prediction.adequacy` reflects bounded evidence status. A new model initially reports insufficient evidence. Supply strictly increasing nonnegative sequence numbers and dimensions matching the configuration; observation, action, and next-observation values must satisfy the configured bounds (default `[-1, 1]`). `source` identifies the data origin for the record; it is **not** an authentication or authorization claim.
